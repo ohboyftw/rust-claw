@@ -10,7 +10,7 @@ use tokio::signal;
 async fn main() -> Result<()> {
     env_logger::init();
 
-    let mut gateway = Gateway::new();
+    let gateway = Gateway::new();
 
     // Register Channels
     let console = Arc::new(ConsoleChannel);

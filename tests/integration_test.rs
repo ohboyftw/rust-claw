@@ -39,7 +39,7 @@ impl Channel for MockChannel {
 #[tokio::test]
 async fn test_end_to_end_flow() {
     // 1. Setup Gateway
-    let mut gateway = Gateway::new();
+    let gateway = Gateway::new();
 
     // 2. Register Mock Channel
     let received_msgs = Arc::new(Mutex::new(Vec::new()));

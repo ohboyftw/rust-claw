@@ -5,17 +5,18 @@ use anyhow::{Context, Result};
 use log::{error, info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{Mutex, RwLock, mpsc};
 use uuid::Uuid;
 
 pub mod session;
 
+#[derive(Clone)]
 pub struct Gateway {
     channels: Arc<RwLock<HashMap<String, Arc<dyn Channel>>>>,
     agents: Arc<RwLock<HashMap<String, Arc<dyn Agent>>>>,
     session_manager: SessionManager,
     tx: mpsc::Sender<ChannelEvent>,
-    rx: Option<mpsc::Receiver<ChannelEvent>>,
+    rx: Arc<Mutex<Option<mpsc::Receiver<ChannelEvent>>>>,
 }
 
 impl Default for Gateway {
@@ -32,7 +33,7 @@ impl Gateway {
             agents: Arc::new(RwLock::new(HashMap::new())),
             session_manager: SessionManager::new(),
             tx,
-            rx: Some(rx),
+            rx: Arc::new(Mutex::new(Some(rx))),
         }
     }
 
@@ -62,8 +63,11 @@ impl Gateway {
         info!("Registered agent: {}", id);
     }
 
-    pub async fn run(&mut self) -> Result<()> {
-        let mut rx = self.rx.take().context("Gateway run called twice")?;
+    pub async fn run(&self) -> Result<()> {
+        let mut rx = {
+            let mut guard = self.rx.lock().await;
+            guard.take().context("Gateway run called twice")?
+        };
         info!("Gateway running...");
 
         while let Some(event) = rx.recv().await {
@@ -73,9 +77,15 @@ impl Gateway {
                     user_id,
                     content,
                 } => {
-                    if let Err(e) = self.handle_message(channel_id, user_id, content).await {
-                        error!("Error handling message: {:?}", e);
-                    }
+                    let gateway = self.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = gateway
+                            .handle_message(channel_id, user_id, content)
+                            .await
+                        {
+                            error!("Error handling message: {:?}", e);
+                        }
+                    });
                 }
             }
         }
@@ -195,7 +205,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_gateway_routing() {
-        let mut gateway = Gateway::new();
+        let gateway = Gateway::new();
         let sent_msgs = Arc::new(Mutex::new(Vec::new()));
 
         let channel = Arc::new(MockChannel {
@@ -210,24 +220,11 @@ mod tests {
         gateway.register_channel(channel.clone()).await.unwrap();
         gateway.register_agent(agent).await;
 
-        // Simulate incoming message by pushing directly to tx (bypassing start)
-        // Or we can use `handle_message` directly if it was public.
-        // Or we can trigger it via the channel start mechanism.
-        // Let's just send to gateway.tx manually? No, tx is private.
-        // But `register_channel` gave `tx` to `channel.start`.
-        // MockChannel::start does nothing.
-
-        // Wait, handle_message is private.
-        // I should expose a method to inject message for testing or use the channel's capability.
-
-        // Let's manually trigger `handle_message`? It's private.
-        // I can change MockChannel to keep the tx and send a message.
-
-        // BUT, `gateway.run()` blocks. I need to run it in a task.
         let tx = gateway.tx.clone();
 
+        let gw = gateway.clone();
         tokio::spawn(async move {
-            gateway.run().await.unwrap();
+            gw.run().await.unwrap();
         });
 
         // Send a message

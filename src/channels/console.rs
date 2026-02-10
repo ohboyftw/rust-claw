@@ -59,7 +59,7 @@ impl Channel for ConsoleChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::types::{AgentId, MessageType, SessionId};
+    use crate::core::types::{MessageType, SessionId};
 
     #[tokio::test]
     async fn test_console_channel_id() {
